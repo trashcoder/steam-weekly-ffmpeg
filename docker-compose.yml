@@ -8,14 +8,11 @@ services:
     ports:
       - "5679:5679"
     volumes:
-      - steam_bot_data:/data/steam-bot
+      - /opt/steam-bot:/data/steam-bot
     networks:
       - n8n_default
 
 volumes:
-  steam_bot_data:
-    external: true
-    name: steam_bot_data
 
 networks:
   n8n_default:

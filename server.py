@@ -16,7 +16,7 @@ import uuid
 import threading
 import subprocess
 from pathlib import Path
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 
 app = Flask(__name__)
 
@@ -58,6 +58,39 @@ def start_render():
     ).start()
 
     return jsonify({"job_id": job_id, "status": "running"}), 202
+
+
+@app.route("/render-sync", methods=["POST"])
+def render_sync():
+    body      = request.get_json(silent=True) or {}
+    workspace = body.get("workspace", str(DATA_DIR / "workspace"))
+    output    = body.get("output",    str(DATA_DIR / "output"))
+
+    env = os.environ.copy()
+    env["STEAM_WORKSPACE"] = workspace
+    env["STEAM_OUTPUT"]    = output
+    try:
+        r = subprocess.run(
+            ["python3", str(SCRIPTS_DIR / "render_video.py")],
+            capture_output=True, text=True, env=env, cwd=str(SCRIPTS_DIR),
+            timeout=3600
+        )
+        if r.returncode == 0:
+            return jsonify({
+                "success": True,
+                "output_file": str(Path(output) / "final_video.mp4"),
+                "log": r.stdout[-2000:]
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": r.stderr[-2000:],
+                "exit_code": r.returncode
+            }), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({"success": False, "error": "Render timed out after 3600s"}), 500
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 def _run_render(job_id: str, workspace: str, output: str):
@@ -121,6 +154,14 @@ def generate_intro_outro():
             "outro":  str(DATA_DIR / "workspace/outro.mp4"),
         })
     return jsonify({"status": "error", "log": r.stderr}), 500
+
+
+# ── File Download ────────────────────────────────────────────────────────
+
+@app.route("/output/<filename>", methods=["GET"])
+def download_output(filename: str):
+    output_dir = str(DATA_DIR / "output")
+    return send_from_directory(output_dir, filename, as_attachment=False)
 
 
 # ── Start ──────────────────────────────────────────────────────────────

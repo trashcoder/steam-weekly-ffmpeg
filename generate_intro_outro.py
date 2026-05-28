@@ -15,6 +15,7 @@ Output:
   ./workspace/outro.mp4
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
