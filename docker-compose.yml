@@ -3,7 +3,7 @@ version: "3.8"
 services:
   ffmpeg-api:
     build:
-      context: .
+      context: https://github.com/trashcoder/steam-weekly-ffmpeg
       dockerfile: ffmpeg-api/Dockerfile
     container_name: ffmpeg-api
     restart: unless-stopped
