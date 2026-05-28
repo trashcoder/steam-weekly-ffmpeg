@@ -1,0 +1,13 @@
+# Lokale Datendaten – nie ins Repo!
+steam-bot-data/
+*.mp4
+*.mp3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Docker
+.dockerignore
