@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  ffmpeg-api:
+    build:
+      context: .
+      dockerfile: ffmpeg-api/Dockerfile
+    container_name: ffmpeg-api
+    restart: unless-stopped
+    ports:
+      - "5679:5679"
+    volumes:
+      - ${STEAM_BOT_DATA_PATH}:/data/steam-bot
+    networks:
+      - n8n_default
+
+networks:
+  n8n_default:
+    external: true
