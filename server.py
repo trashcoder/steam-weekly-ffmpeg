@@ -237,6 +237,40 @@ def save_trailer():
     return _save_game_file("trailer.mp4")
 
 
+@app.route("/workspace/download-trailer", methods=["POST"])
+def download_trailer():
+    """Lädt Trailer per FFmpeg direkt von der URL – unterstützt DASH, HLS und direkte MP4."""
+    body = request.get_json(silent=True) or {}
+    workspace = Path(body.get("workspace", str(DATA_DIR / "workspace")))
+    rank = str(body.get("rank", "")).zfill(2)
+    appid = str(body.get("appid", ""))
+    trailer_url = body.get("trailerUrl", "")
+    name = body.get("name", "")
+
+    if not appid or not trailer_url:
+        return jsonify({"error": "appid and trailerUrl required"}), 400
+
+    game_dir = workspace / "games" / f"{rank}_{appid}"
+    game_dir.mkdir(parents=True, exist_ok=True)
+    dst = game_dir / "trailer.mp4"
+
+    print(f"[download-trailer] {name} ({appid}): {trailer_url[:80]}")
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", trailer_url,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-c:a", "aac", "-ar", "44100", "-ac", "2",
+        "-t", "90",
+        str(dst)
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    if r.returncode != 0:
+        print(f"[download-trailer] FEHLER {name}: {r.stderr[-500:]}")
+        return jsonify({"error": r.stderr[-500:], "rank": body.get("rank"), "appid": appid, "name": name}), 500
+
+    return jsonify({"status": "done", "file": str(dst), "rank": body.get("rank"), "appid": appid, "name": name})
+
+
 def _merge_voice_with_bg(workspace: Path, bg_name: str, voice_file, out_name: str, echo_fields: dict = None):
     """Legt Voice-Over über ein Hintergrundvideo (geloopt). Fallback: schwarzer Screen."""
     if not voice_file:
