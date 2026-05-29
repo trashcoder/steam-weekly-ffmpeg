@@ -237,6 +237,63 @@ def save_trailer():
     return _save_game_file("trailer.mp4")
 
 
+def _merge_voice_with_bg(workspace: Path, bg_name: str, voice_file, out_name: str, echo_fields: dict = None):
+    """Legt Voice-Over über ein Hintergrundvideo (geloopt). Fallback: schwarzer Screen."""
+    if not voice_file:
+        return jsonify({"error": "file required"}), 400
+    tmp_voice = workspace / f"_tmp_{out_name}.mp3"
+    voice_file.save(str(tmp_voice))
+    out = workspace / out_name
+    video_src = workspace / bg_name
+
+    try:
+        if video_src.exists():
+            cmd = [
+                "ffmpeg", "-y",
+                "-stream_loop", "-1", "-i", str(video_src),
+                "-i", str(tmp_voice),
+                "-map", "0:v", "-map", "1:a",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2",
+                "-shortest",
+                str(out)
+            ]
+        else:
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", "color=c=black:size=1920x1080:rate=30",
+                "-i", str(tmp_voice),
+                "-map", "0:v", "-map", "1:a",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2",
+                "-shortest",
+                str(out)
+            ]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"[merge-voice-bg] FEHLER: {r.stderr[-500:]}")
+            return jsonify({"error": r.stderr[-500:]}), 500
+        response = {"status": "done", "file": str(out)}
+        if echo_fields:
+            response.update(echo_fields)
+        return jsonify(response)
+    finally:
+        tmp_voice.unlink(missing_ok=True)
+
+
+@app.route("/workspace/save-intro-voice", methods=["POST"])
+def save_intro_voice():
+    workspace = Path(request.form.get("workspace", str(DATA_DIR / "workspace")))
+    echo = {"outroText": request.form.get("outroText", "")}
+    return _merge_voice_with_bg(workspace, "intro_bg.mp4", request.files.get("file"), "intro.mp4", echo)
+
+
+@app.route("/workspace/save-outro-voice", methods=["POST"])
+def save_outro_voice():
+    workspace = Path(request.form.get("workspace", str(DATA_DIR / "workspace")))
+    return _merge_voice_with_bg(workspace, "outro_bg.mp4", request.files.get("file"), "outro.mp4")
+
+
 # ── File Download ────────────────────────────────────────────────────────
 
 @app.route("/output/<filename>", methods=["GET"])
