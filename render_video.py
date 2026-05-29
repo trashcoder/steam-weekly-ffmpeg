@@ -38,6 +38,8 @@ TARGET_VCODEC  = "libx264"
 TARGET_PRESET  = "fast"
 TARGET_CRF     = 23
 
+CLIP_MAX_DURATION = int(os.environ.get("CLIP_MAX_DURATION", "60"))  # Sekunden pro Spiel-Clip
+
 # Übergangs-/Titelkarte pro Spiel (Sekunden schwarzer Screen mit Titel)
 TITLE_CARD_DURATION = 3   # Sekunden – auf 0 setzen um zu deaktivieren
 
@@ -77,13 +79,14 @@ def normalize(src: Path, dst: Path, label: str = ""):
     run(cmd, label or f"Normalisiere {src.name}")
 
 
-def merge_trailer_voice(trailer: Path, voice: Path, dst: Path, game_name: str = ""):
+def merge_trailer_voice(trailer: Path, voice: Path, dst: Path, game_name: str = "", max_duration: int = None):
     """
     Mischt Trailer-Video mit Voice-Over:
     - Original-Ton des Trailers auf 20 % reduziert
     - Voice-Over auf 100 %
     - Falls Trailer kürzer als Voice → Video einfrieren (loop letztes Frame)
     - Falls Voice kürzer → Video wird gekürzt
+    - Falls max_duration gesetzt → Clip wird auf max. Sekunden begrenzt
     """
     filter_complex = (
         "[0:a]volume=0.2[trailer_audio];"
@@ -100,8 +103,10 @@ def merge_trailer_voice(trailer: Path, voice: Path, dst: Path, game_name: str = 
         "-c:v", TARGET_VCODEC, "-preset", TARGET_PRESET, "-crf", str(TARGET_CRF),
         "-c:a", TARGET_AUDIO, "-ar", "44100", "-ac", "2",
         "-shortest",
-        str(dst)
     ]
+    if max_duration is not None:
+        cmd += ["-t", str(max_duration)]
+    cmd.append(str(dst))
     run(cmd, f"Merge Trailer+Voice: {game_name or dst.name}")
 
 
@@ -212,7 +217,7 @@ def main():
 
         # Voice-Over mergen
         merged = tmp_file(f"{prefix}_merged.mp4")
-        merge_trailer_voice(trailer_norm, voice, merged, game_name)
+        merge_trailer_voice(trailer_norm, voice, merged, game_name, CLIP_MAX_DURATION)
         parts.append(merged)
 
     # ── 3. OUTRO ──────────────────────────────
