@@ -12,10 +12,7 @@ services:
     networks:
       - n8n_default
 
-volumes:
-
 networks:
   n8n_default:
     external: true
-
 
