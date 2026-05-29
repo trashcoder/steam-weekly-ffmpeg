@@ -194,6 +194,41 @@ def create_game_dir():
     return jsonify({"status": "done", "dir": str(game_dir)})
 
 
+def _save_game_file(filename: str):
+    """Empfängt multipart-Upload, erstellt Spielordner, speichert Datei.
+    Gibt Metadaten an n8n zurück, damit der Datenfluss nicht abbricht."""
+    workspace = Path(request.form.get("workspace", str(DATA_DIR / "workspace")))
+    rank = str(request.form.get("rank", "")).zfill(2)
+    appid = str(request.form.get("appid", ""))
+    if not appid:
+        return jsonify({"error": "appid required"}), 400
+    game_dir = workspace / "games" / f"{rank}_{appid}"
+    game_dir.mkdir(parents=True, exist_ok=True)
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "file required"}), 400
+    dst = game_dir / filename
+    file.save(str(dst))
+    return jsonify({
+        "status": "done",
+        "file": str(dst),
+        "rank": request.form.get("rank"),
+        "appid": appid,
+        "name": request.form.get("name", ""),
+        "trailerUrl": request.form.get("trailerUrl", ""),
+    })
+
+
+@app.route("/workspace/save-voice", methods=["POST"])
+def save_voice():
+    return _save_game_file("voice.mp3")
+
+
+@app.route("/workspace/save-trailer", methods=["POST"])
+def save_trailer():
+    return _save_game_file("trailer.mp4")
+
+
 # ── File Download ────────────────────────────────────────────────────────
 
 @app.route("/output/<filename>", methods=["GET"])
