@@ -14,6 +14,7 @@ Endpoints:
 import os
 import json
 import uuid
+import shutil
 import threading
 import subprocess
 from pathlib import Path
@@ -77,20 +78,24 @@ def render_sync():
             timeout=3600
         )
         if r.returncode == 0:
+            print(f"[render-sync] OK\n{r.stdout[-1000:]}")
             return jsonify({
                 "success": True,
                 "output_file": str(Path(output) / "final_video.mp4"),
                 "log": r.stdout[-2000:]
             })
         else:
+            print(f"[render-sync] FEHLER (exit {r.returncode})\nSTDOUT: {r.stdout[-500:]}\nSTDERR: {r.stderr[-1000:]}")
             return jsonify({
                 "success": False,
-                "error": r.stderr[-2000:],
+                "error": r.stderr[-2000:] or r.stdout[-2000:],
                 "exit_code": r.returncode
             }), 500
     except subprocess.TimeoutExpired:
+        print("[render-sync] TIMEOUT nach 3600s")
         return jsonify({"success": False, "error": "Render timed out after 3600s"}), 500
     except Exception as e:
+        print(f"[render-sync] EXCEPTION: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -176,9 +181,12 @@ def save_metadata():
 def init_workspace():
     body = request.get_json(silent=True) or {}
     workspace = Path(body.get("workspace", str(DATA_DIR / "workspace")))
-    (workspace / "games").mkdir(parents=True, exist_ok=True)
+    games_dir = workspace / "games"
+    if games_dir.exists():
+        shutil.rmtree(games_dir)
+    games_dir.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "output").mkdir(parents=True, exist_ok=True)
-    return jsonify({"status": "done", "workspace": str(workspace), "games": str(workspace / "games")})
+    return jsonify({"status": "done", "workspace": str(workspace), "games": str(games_dir)})
 
 
 @app.route("/workspace/game-dir", methods=["POST"])
