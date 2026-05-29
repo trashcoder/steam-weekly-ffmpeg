@@ -255,14 +255,19 @@ def download_trailer():
     dst = game_dir / "trailer.mp4"
 
     print(f"[download-trailer] {name} ({appid}): {trailer_url[:80]}")
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", trailer_url,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-c:a", "aac", "-ar", "44100", "-ac", "2",
-        "-t", "90",
-        str(dst)
-    ]
+    is_stream = any(x in trailer_url for x in [".m3u8", ".mpd", "manifest", "hls", "dash"])
+    is_direct_mp4 = trailer_url.lower().split("?")[0].endswith(".mp4") and not is_stream
+
+    if is_direct_mp4:
+        cmd = ["wget", "-q", "-O", str(dst), "--timeout=120", trailer_url]
+    else:
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", trailer_url,
+            "-c", "copy",
+            "-t", "90",
+            str(dst)
+        ]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if r.returncode != 0:
         print(f"[download-trailer] FEHLER {name}: {r.stderr[-500:]}")
