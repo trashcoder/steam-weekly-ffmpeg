@@ -12,6 +12,7 @@ Endpoints:
 """
 
 import os
+import json
 import uuid
 import threading
 import subprocess
@@ -154,6 +155,21 @@ def generate_intro_outro():
             "outro":  str(DATA_DIR / "workspace/outro.mp4"),
         })
     return jsonify({"status": "error", "log": r.stderr}), 500
+
+
+# ── Metadaten speichern ─────────────────────────────────────────────────
+
+@app.route("/metadata", methods=["POST"])
+def save_metadata():
+    body = request.get_json(silent=True) or {}
+    workspace = Path(body.get("workspace", str(DATA_DIR / "workspace")))
+    meta = body.get("meta", body)
+
+    workspace.mkdir(parents=True, exist_ok=True)
+    meta_file = workspace / "games_meta.json"
+    meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return jsonify({"status": "done", "file": str(meta_file), "count": len(meta)})
 
 
 # ── File Download ────────────────────────────────────────────────────────
