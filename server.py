@@ -181,6 +181,19 @@ def init_workspace():
     return jsonify({"status": "done", "workspace": str(workspace), "games": str(workspace / "games")})
 
 
+@app.route("/workspace/game-dir", methods=["POST"])
+def create_game_dir():
+    body = request.get_json(silent=True) or {}
+    workspace = Path(body.get("workspace", str(DATA_DIR / "workspace")))
+    rank = str(body.get("rank", "")).zfill(2)
+    appid = str(body.get("appid", ""))
+    if not appid:
+        return jsonify({"error": "appid required"}), 400
+    game_dir = workspace / "games" / f"{rank}_{appid}"
+    game_dir.mkdir(parents=True, exist_ok=True)
+    return jsonify({"status": "done", "dir": str(game_dir)})
+
+
 # ── File Download ────────────────────────────────────────────────────────
 
 @app.route("/output/<filename>", methods=["GET"])
