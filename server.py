@@ -172,6 +172,15 @@ def save_metadata():
     return jsonify({"status": "done", "file": str(meta_file), "count": len(meta)})
 
 
+@app.route("/workspace/init", methods=["POST"])
+def init_workspace():
+    body = request.get_json(silent=True) or {}
+    workspace = Path(body.get("workspace", str(DATA_DIR / "workspace")))
+    (workspace / "games").mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "output").mkdir(parents=True, exist_ok=True)
+    return jsonify({"status": "done", "workspace": str(workspace), "games": str(workspace / "games")})
+
+
 # ── File Download ────────────────────────────────────────────────────────
 
 @app.route("/output/<filename>", methods=["GET"])
