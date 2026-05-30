@@ -320,6 +320,19 @@ def _merge_voice_with_bg(workspace: Path, bg_name: str, voice_file, out_name: st
         tmp_voice.unlink(missing_ok=True)
 
 
+@app.route("/workspace/upload-intro-bg", methods=["POST"])
+def upload_intro_bg():
+    """Ersetzt intro_bg.mp4 durch ein hochgeladenes Video (z.B. AI-generiertes Intro)."""
+    workspace = Path(request.form.get("workspace", str(DATA_DIR / "workspace")))
+    workspace.mkdir(parents=True, exist_ok=True)
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "file required"}), 400
+    dst = workspace / "intro_bg.mp4"
+    file.save(str(dst))
+    return jsonify({"status": "done", "file": str(dst)})
+
+
 @app.route("/workspace/save-intro-voice", methods=["POST"])
 def save_intro_voice():
     workspace = Path(request.form.get("workspace", str(DATA_DIR / "workspace")))
