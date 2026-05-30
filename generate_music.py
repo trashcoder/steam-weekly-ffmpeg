@@ -12,6 +12,7 @@ Umgebungsvariablen:
 import base64
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,11 +21,11 @@ import requests
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 DEFAULT_PROMPT = (
-    "Synthwave electronic background music for a gaming YouTube channel. "
-    "Energetic retro synths, pulsing bass, driving 80s-inspired beat. "
+    "Energetic electronic background music for a gaming YouTube channel. "
+    "Steady driving beat, rich synthesizers, uplifting and exciting feel. "
     "No vocals, purely instrumental. "
-    "Perfect as low-volume background music under spoken game reviews. "
-    "Build up from a gentle intro, peak energy at 15 seconds, smooth fade-out."
+    "Suitable as continuous background music under spoken game reviews. "
+    "Maintain consistent energy throughout with subtle variations — no abrupt endings."
 )
 
 
@@ -34,7 +35,7 @@ def generate(api_key: str, prompt: str, workspace: Path) -> Path:
         "Content-Type": "application/json",
     }
     payload = {
-        "model": "google/lyria-3-clip-preview",
+        "model": "google/lyria-3-pro-preview",
         "messages": [{"role": "user", "content": prompt}],
         "stream": True,
     }
@@ -84,6 +85,38 @@ INTRO_PROMPT = (
 )
 
 
+def generate_long_music(api_key: str, prompt: str, workspace: Path, clips: int = 3) -> Path:
+    """Generiert mehrere Clips und fügt sie zu einem langen Track zusammen."""
+    clip_paths = []
+    for i in range(clips):
+        print(f"Generating music clip {i + 1}/{clips}...")
+        clip = generate(api_key, prompt, workspace)
+        numbered = workspace / f"gaming_music_part{i + 1}{clip.suffix}"
+        clip.rename(numbered)
+        clip_paths.append(numbered)
+
+    out = workspace / "gaming_music.mp3"
+    list_file = workspace / "_music_concat.txt"
+    with open(list_file, "w") as f:
+        for cp in clip_paths:
+            f.write(f"file '{cp.resolve()}'\n")
+
+    r = subprocess.run(
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+         "-i", str(list_file), "-c:a", "libmp3lame", "-q:a", "2", str(out)],
+        capture_output=True, text=True
+    )
+    list_file.unlink(missing_ok=True)
+    for cp in clip_paths:
+        cp.unlink(missing_ok=True)
+
+    if r.returncode != 0:
+        sys.exit(f"FFmpeg concat error: {r.stderr}")
+
+    print(f"Long music track saved: {out} ({out.stat().st_size // 1024} KB)")
+    return out
+
+
 def main():
     api_key = os.environ.get("OPENROUTER_API_KEY", "")
     if not api_key:
@@ -99,11 +132,14 @@ def main():
         workspace = Path(os.environ.get("STEAM_WORKSPACE", "/data/steam-bot/workspace"))
         prompt = os.environ.get("MUSIC_PROMPT", DEFAULT_PROMPT)
 
-    result = generate(api_key, prompt, workspace)
-
-    # Bei custom output: Datei zum gewünschten Namen umbenennen
-    if custom_output and result != Path(custom_output):
-        result.rename(custom_output)
+    if custom_output:
+        # Intro-Musik: einzelner Clip reicht
+        result = generate(api_key, prompt, workspace)
+        if result != Path(custom_output):
+            result.rename(custom_output)
+    else:
+        # Hintergrundmusik: mehrere Clips zu einem langen Track zusammensetzen
+        generate_long_music(api_key, prompt, workspace)
 
 
 if __name__ == "__main__":

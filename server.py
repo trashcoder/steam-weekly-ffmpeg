@@ -79,9 +79,16 @@ def render_sync():
         )
         if r.returncode == 0:
             print(f"[render-sync] OK\n{r.stdout[-1000:]}")
+            ts_path = Path(output) / "timestamps.json"
+            timestamps = []
+            if ts_path.exists():
+                import json as _json
+                with open(ts_path) as _f:
+                    timestamps = _json.load(_f).get("games", [])
             return jsonify({
                 "success": True,
                 "output_file": str(Path(output) / "final_video.mp4"),
+                "timestamps": timestamps,
                 "log": r.stdout[-2000:]
             })
         else:

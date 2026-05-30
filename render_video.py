@@ -146,6 +146,44 @@ def make_title_card(text: str, duration: int, dst: Path):
     run(cmd, f"Titelkarte: {text[:40]}")
 
 
+def get_duration(path: Path) -> float:
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True, text=True
+    )
+    try:
+        return float(result.stdout.strip())
+    except Exception:
+        return 0.0
+
+
+def format_ts(seconds: float) -> str:
+    s = int(seconds)
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h > 0:
+        return f"{h}:{m:02d}:{sec:02d}"
+    return f"{m}:{sec:02d}"
+
+
+def mix_music_over_video(video: Path, music: Path, dst: Path):
+    """Legt Hintergrundmusik (geloopt) unter das fertige Gesamtvideo."""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(video),
+        "-stream_loop", "-1", "-i", str(music),
+        "-filter_complex",
+        "[1:a]volume=0.15[bg];[0:a][bg]amix=inputs=2:duration=first[aout]",
+        "-map", "0:v",
+        "-map", "[aout]",
+        "-c:v", "copy",
+        "-c:a", TARGET_AUDIO, "-ar", "44100", "-ac", "2",
+        str(dst)
+    ]
+    run(cmd, "Hintergrundmusik über Gesamtvideo mischen")
+
+
 def concat_videos(parts: list[Path], dst: Path):
     """Verbindet eine Liste von MP4s via FFmpeg concat demuxer."""
     list_file = OUTPUT_DIR / "_concat_list.txt"
@@ -174,7 +212,8 @@ def main():
     tmp.mkdir(exist_ok=True)
 
     parts: list[Path] = []
-    step = 0
+    timestamps = []
+    cursor = 0.0
 
     def tmp_file(name: str) -> Path:
         return tmp / name
@@ -186,19 +225,13 @@ def main():
         intro_norm = tmp_file("00_intro.mp4")
         normalize(intro_src, intro_norm, "Intro normalisieren")
         parts.append(intro_norm)
+        cursor += get_duration(intro_norm)
     else:
         print("\n[1/4] Kein Intro gefunden – übersprungen.")
 
     # ── 2. SPIELE ─────────────────────────────
     games_dir = WORKSPACE / "games"
     game_folders = sorted([d for d in games_dir.iterdir() if d.is_dir()])
-
-    # Hintergrundmusik suchen (gaming_music.mp3 / .wav / .flac)
-    music_file = next(WORKSPACE.glob("gaming_music.*"), None)
-    if music_file:
-        print(f"  ♪ Hintergrundmusik gefunden: {music_file.name}")
-    else:
-        print("  ♪ Keine Hintergrundmusik – nur Voice-Over.")
 
     print(f"\n[2/4] {len(game_folders)} Spiele verarbeiten...")
 
@@ -224,11 +257,14 @@ def main():
         game_name = meta.get(appid, folder.name)
         prefix    = f"{i:02d}"
 
+        game_start = cursor
+
         # Titelkarte
         if TITLE_CARD_DURATION > 0:
             card = tmp_file(f"{prefix}_card.mp4")
             make_title_card(f"#{i} – {game_name}", TITLE_CARD_DURATION, card)
             parts.append(card)
+            cursor += TITLE_CARD_DURATION
 
         # Trailer normalisieren
         trailer_norm = tmp_file(f"{prefix}_trailer_norm.mp4")
@@ -236,8 +272,16 @@ def main():
 
         # Voice-Over mergen (Trailer-Audio stumm, Musik-Loop drunter)
         merged = tmp_file(f"{prefix}_merged.mp4")
-        merge_trailer_voice(trailer_norm, voice, merged, game_name, CLIP_MAX_DURATION, music=music_file)
+        merge_trailer_voice(trailer_norm, voice, merged, game_name, CLIP_MAX_DURATION)
         parts.append(merged)
+        cursor += get_duration(merged)
+
+        timestamps.append({
+            "rank": i,
+            "name": game_name,
+            "seconds": int(game_start),
+            "timestamp": format_ts(game_start)
+        })
 
     # ── 3. OUTRO ──────────────────────────────
     outro_src = WORKSPACE / "outro.mp4"
@@ -252,6 +296,22 @@ def main():
     # ── 4. ZUSAMMENFÜGEN ──────────────────────
     print(f"\n[4/4] {len(parts)} Clips zusammenfügen → {OUTPUT_FILE}")
     concat_videos(parts, OUTPUT_FILE)
+
+    # ── 5. HINTERGRUNDMUSIK ───────────────────
+    music_file = next(WORKSPACE.glob("gaming_music.*"), None)
+    if music_file:
+        print(f"\n[5/5] Hintergrundmusik mischen: {music_file.name}")
+        music_output = OUTPUT_DIR / "_final_with_music.mp4"
+        mix_music_over_video(OUTPUT_FILE, music_file, music_output)
+        music_output.replace(OUTPUT_FILE)
+    else:
+        print("\n[5/5] Keine Hintergrundmusik gefunden – übersprungen.")
+
+    # Timestamps speichern
+    ts_file = OUTPUT_DIR / "timestamps.json"
+    with open(ts_file, "w") as f:
+        json.dump({"games": timestamps}, f, ensure_ascii=False)
+    print(f"\n⏱ Timestamps: {[t['timestamp'] + ' ' + t['name'] for t in timestamps]}")
 
     # Aufräumen
     import shutil
