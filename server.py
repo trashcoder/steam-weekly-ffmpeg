@@ -276,8 +276,8 @@ def download_trailer():
     return jsonify({"status": "done", "file": str(dst), "rank": body.get("rank"), "appid": appid, "name": name})
 
 
-def _merge_voice_with_bg(workspace: Path, bg_name: str, voice_file, out_name: str, echo_fields: dict = None):
-    """Legt Voice-Over über ein Hintergrundvideo (geloopt). Fallback: schwarzer Screen."""
+def _merge_voice_with_bg(workspace: Path, bg_name: str, voice_file, out_name: str, echo_fields: dict = None, music: Path = None, music_offset: int = 0):
+    """Legt Voice-Over (+ optionale Hintergrundmusik) über ein Hintergrundvideo (geloopt)."""
     if not voice_file:
         return jsonify({"error": "file required"}), 400
     tmp_voice = workspace / f"_tmp_{out_name}.mp3"
@@ -286,28 +286,40 @@ def _merge_voice_with_bg(workspace: Path, bg_name: str, voice_file, out_name: st
     video_src = workspace / bg_name
 
     try:
-        if video_src.exists():
+        video_input = (
+            ["-stream_loop", "-1", "-i", str(video_src)]
+            if video_src.exists()
+            else ["-f", "lavfi", "-i", "color=c=black:size=1920x1080:rate=30"]
+        )
+
+        if music and music.exists():
+            filter_complex = (
+                "[1:a]volume=1.0[voice];"
+                "[2:a]volume=0.15[bg];"
+                "[voice][bg]amix=inputs=2:duration=first[aout]"
+            )
             cmd = [
                 "ffmpeg", "-y",
-                "-stream_loop", "-1", "-i", str(video_src),
+                *video_input,
                 "-i", str(tmp_voice),
-                "-map", "0:v", "-map", "1:a",
+                "-stream_loop", "-1", "-ss", str(music_offset), "-i", str(music),
+                "-filter_complex", filter_complex,
+                "-map", "0:v", "-map", "[aout]",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                 "-c:a", "aac", "-ar", "44100", "-ac", "2",
-                "-shortest",
-                str(out)
+                "-shortest", str(out),
             ]
         else:
             cmd = [
                 "ffmpeg", "-y",
-                "-f", "lavfi", "-i", "color=c=black:size=1920x1080:rate=30",
+                *video_input,
                 "-i", str(tmp_voice),
                 "-map", "0:v", "-map", "1:a",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                 "-c:a", "aac", "-ar", "44100", "-ac", "2",
-                "-shortest",
-                str(out)
+                "-shortest", str(out),
             ]
+
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             print(f"[merge-voice-bg] FEHLER: {r.stderr[-500:]}")
@@ -360,11 +372,36 @@ def upload_intro_bg():
     return jsonify({"status": "done", "file": str(dst)})
 
 
+@app.route("/generate-intro-music", methods=["POST"])
+def generate_intro_music():
+    """Generiert das feste Intro-Lied via Lyria (einmalig aufrufen). Gespeichert außerhalb des Workspace."""
+    api_key = (request.get_json(silent=True) or {}).get("api_key") or os.environ.get("OPENROUTER_API_KEY", "")
+    if not api_key:
+        return jsonify({"error": "api_key required"}), 400
+
+    out_path = DATA_DIR / "intro_music.mp3"
+    env = os.environ.copy()
+    env["OPENROUTER_API_KEY"] = api_key
+    env["MUSIC_OUTPUT"] = str(out_path)
+
+    r = subprocess.run(
+        ["python3", str(SCRIPTS_DIR / "generate_music.py")],
+        capture_output=True, text=True, env=env, cwd=str(SCRIPTS_DIR),
+        timeout=120
+    )
+    if r.returncode == 0:
+        actual = next(DATA_DIR.glob("intro_music.*"), out_path)
+        return jsonify({"status": "done", "file": str(actual)})
+    print(f"[generate-intro-music] FEHLER: {r.stderr}")
+    return jsonify({"status": "error", "log": r.stderr}), 500
+
+
 @app.route("/workspace/save-intro-voice", methods=["POST"])
 def save_intro_voice():
     workspace = Path(request.form.get("workspace", str(DATA_DIR / "workspace")))
     echo = {"outroText": request.form.get("outroText", "")}
-    return _merge_voice_with_bg(workspace, "intro_bg.mp4", request.files.get("file"), "intro.mp4", echo)
+    intro_music = next(DATA_DIR.glob("intro_music.*"), None)
+    return _merge_voice_with_bg(workspace, "intro_bg.mp4", request.files.get("file"), "intro.mp4", echo, music=intro_music, music_offset=8)
 
 
 @app.route("/workspace/save-outro-voice", methods=["POST"])

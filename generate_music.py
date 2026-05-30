@@ -75,15 +75,35 @@ def generate(api_key: str, prompt: str, workspace: Path) -> Path:
     return out
 
 
+INTRO_PROMPT = (
+    "High-energy Drum and Bass intro for a gaming YouTube channel. "
+    "Upbeat dance feel, fast breakbeat drums, punchy bass line. "
+    "Explosive start within the first second — no slow build-up. "
+    "Euphoric, driving, fun. No vocals, purely instrumental. "
+    "Think club-ready DnB with a bright, modern gaming vibe."
+)
+
+
 def main():
     api_key = os.environ.get("OPENROUTER_API_KEY", "")
     if not api_key:
         sys.exit("Error: OPENROUTER_API_KEY not set")
 
-    workspace = Path(os.environ.get("STEAM_WORKSPACE", "/data/steam-bot/workspace"))
-    prompt = os.environ.get("MUSIC_PROMPT", DEFAULT_PROMPT)
+    # MUSIC_OUTPUT überschreibt den Standard-Workspace-Pfad (für Intro-Musik)
+    custom_output = os.environ.get("MUSIC_OUTPUT")
+    if custom_output:
+        out_path = Path(custom_output)
+        workspace = out_path.parent
+        prompt = os.environ.get("MUSIC_PROMPT", INTRO_PROMPT)
+    else:
+        workspace = Path(os.environ.get("STEAM_WORKSPACE", "/data/steam-bot/workspace"))
+        prompt = os.environ.get("MUSIC_PROMPT", DEFAULT_PROMPT)
 
-    generate(api_key, prompt, workspace)
+    result = generate(api_key, prompt, workspace)
+
+    # Bei custom output: Datei zum gewünschten Namen umbenennen
+    if custom_output and result != Path(custom_output):
+        result.rename(custom_output)
 
 
 if __name__ == "__main__":
