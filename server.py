@@ -320,6 +320,33 @@ def _merge_voice_with_bg(workspace: Path, bg_name: str, voice_file, out_name: st
         tmp_voice.unlink(missing_ok=True)
 
 
+@app.route("/workspace/generate-music", methods=["POST"])
+def generate_music():
+    """Generiert Hintergrundmusik via Lyria und speichert sie im Workspace."""
+    body = request.get_json(silent=True) or {}
+    workspace = body.get("workspace", str(DATA_DIR / "workspace"))
+    api_key = body.get("api_key") or os.environ.get("OPENROUTER_API_KEY", "")
+    if not api_key:
+        return jsonify({"error": "api_key required (body oder OPENROUTER_API_KEY env)"}), 400
+
+    env = os.environ.copy()
+    env["STEAM_WORKSPACE"] = workspace
+    env["OPENROUTER_API_KEY"] = api_key
+    if "music_prompt" in body:
+        env["MUSIC_PROMPT"] = body["music_prompt"]
+
+    r = subprocess.run(
+        ["python3", str(SCRIPTS_DIR / "generate_music.py")],
+        capture_output=True, text=True, env=env, cwd=str(SCRIPTS_DIR),
+        timeout=120
+    )
+    if r.returncode == 0:
+        music_file = next(Path(workspace).glob("gaming_music.*"), None)
+        return jsonify({"status": "done", "file": str(music_file or workspace + "/gaming_music.*")})
+    print(f"[generate-music] FEHLER: {r.stderr}")
+    return jsonify({"status": "error", "log": r.stderr}), 500
+
+
 @app.route("/workspace/upload-intro-bg", methods=["POST"])
 def upload_intro_bg():
     """Ersetzt intro_bg.mp4 durch ein hochgeladenes Video (z.B. AI-generiertes Intro)."""

@@ -79,31 +79,43 @@ def normalize(src: Path, dst: Path, label: str = ""):
     run(cmd, label or f"Normalisiere {src.name}")
 
 
-def merge_trailer_voice(trailer: Path, voice: Path, dst: Path, game_name: str = "", max_duration: int = None):
+def merge_trailer_voice(trailer: Path, voice: Path, dst: Path, game_name: str = "", max_duration: int = None, music: Path = None):
     """
-    Mischt Trailer-Video mit Voice-Over:
-    - Original-Ton des Trailers auf 20 % reduziert
-    - Voice-Over auf 100 %
-    - Falls Trailer kürzer als Voice → Video einfrieren (loop letztes Frame)
-    - Falls Voice kürzer → Video wird gekürzt
-    - Falls max_duration gesetzt → Clip wird auf max. Sekunden begrenzt
+    Kombiniert Trailer-Video (ohne Original-Ton) mit Voice-Over und optionaler Hintergrundmusik.
+    - Trailer-Audio wird komplett entfernt (Copyright-Schutz)
+    - Voice-Over: 100 %
+    - Hintergrundmusik: 15 % (geloopt, falls angegeben)
     """
-    filter_complex = (
-        "[0:a]volume=0.2[trailer_audio];"
-        "[1:a]volume=1.0[voice_audio];"
-        "[trailer_audio][voice_audio]amix=inputs=2:duration=longest[aout]"
-    )
-    cmd = [
-        "ffmpeg", "-y",
-        "-stream_loop", "-1", "-i", str(trailer),   # Trailer ggf. loopen
-        "-i", str(voice),
-        "-filter_complex", filter_complex,
-        "-map", "0:v",
-        "-map", "[aout]",
-        "-c:v", TARGET_VCODEC, "-preset", TARGET_PRESET, "-crf", str(TARGET_CRF),
-        "-c:a", TARGET_AUDIO, "-ar", "44100", "-ac", "2",
-        "-shortest",
-    ]
+    if music and music.exists():
+        filter_complex = (
+            "[1:a]volume=1.0[voice];"
+            "[2:a]volume=0.15[bg];"
+            "[voice][bg]amix=inputs=2:duration=first[aout]"
+        )
+        cmd = [
+            "ffmpeg", "-y",
+            "-stream_loop", "-1", "-i", str(trailer),
+            "-i", str(voice),
+            "-stream_loop", "-1", "-i", str(music),
+            "-filter_complex", filter_complex,
+            "-map", "0:v",
+            "-map", "[aout]",
+            "-c:v", TARGET_VCODEC, "-preset", TARGET_PRESET, "-crf", str(TARGET_CRF),
+            "-c:a", TARGET_AUDIO, "-ar", "44100", "-ac", "2",
+            "-shortest",
+        ]
+    else:
+        # Fallback: nur Voice-Over, kein Trailer-Audio, keine Musik
+        cmd = [
+            "ffmpeg", "-y",
+            "-stream_loop", "-1", "-i", str(trailer),
+            "-i", str(voice),
+            "-map", "0:v",
+            "-map", "1:a",
+            "-c:v", TARGET_VCODEC, "-preset", TARGET_PRESET, "-crf", str(TARGET_CRF),
+            "-c:a", TARGET_AUDIO, "-ar", "44100", "-ac", "2",
+            "-shortest",
+        ]
     if max_duration is not None:
         cmd += ["-t", str(max_duration)]
     cmd.append(str(dst))
@@ -181,6 +193,13 @@ def main():
     games_dir = WORKSPACE / "games"
     game_folders = sorted([d for d in games_dir.iterdir() if d.is_dir()])
 
+    # Hintergrundmusik suchen (gaming_music.mp3 / .wav / .flac)
+    music_file = next(WORKSPACE.glob("gaming_music.*"), None)
+    if music_file:
+        print(f"  ♪ Hintergrundmusik gefunden: {music_file.name}")
+    else:
+        print("  ♪ Keine Hintergrundmusik – nur Voice-Over.")
+
     print(f"\n[2/4] {len(game_folders)} Spiele verarbeiten...")
 
     # Metadaten laden falls vorhanden (für Titelkarten)
@@ -215,9 +234,9 @@ def main():
         trailer_norm = tmp_file(f"{prefix}_trailer_norm.mp4")
         normalize(trailer, trailer_norm, f"Trailer #{i} normalisieren")
 
-        # Voice-Over mergen
+        # Voice-Over mergen (Trailer-Audio stumm, Musik-Loop drunter)
         merged = tmp_file(f"{prefix}_merged.mp4")
-        merge_trailer_voice(trailer_norm, voice, merged, game_name, CLIP_MAX_DURATION)
+        merge_trailer_voice(trailer_norm, voice, merged, game_name, CLIP_MAX_DURATION, music=music_file)
         parts.append(merged)
 
     # ── 3. OUTRO ──────────────────────────────

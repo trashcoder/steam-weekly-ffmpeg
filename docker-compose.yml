@@ -7,6 +7,8 @@ services:
     restart: unless-stopped
     ports:
       - "5679:5679"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
     volumes:
       - /opt/steam-bot:/data/steam-bot
     networks:
