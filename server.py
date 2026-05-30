@@ -372,6 +372,17 @@ def upload_intro_bg():
     return jsonify({"status": "done", "file": str(dst)})
 
 
+@app.route("/upload-intro-music", methods=["POST"])
+def upload_intro_music():
+    """Lädt eine lokal generierte Intro-Musik-Datei auf den Server (dauerhaft, außerhalb Workspace)."""
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "file required"}), 400
+    dst = DATA_DIR / "intro_music.mp3"
+    file.save(str(dst))
+    return jsonify({"status": "done", "file": str(dst)})
+
+
 @app.route("/generate-intro-music", methods=["POST"])
 def generate_intro_music():
     """Generiert das feste Intro-Lied via Lyria (einmalig aufrufen). Gespeichert außerhalb des Workspace."""
