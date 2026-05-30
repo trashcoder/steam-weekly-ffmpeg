@@ -21,11 +21,11 @@ import requests
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 DEFAULT_PROMPT = (
-    "Energetic electronic background music for a gaming YouTube channel. "
-    "Steady driving beat, rich synthesizers, uplifting and exciting feel. "
+    "Uplifting electronic pop drum and bass for a gaming YouTube channel. "
+    "Fast breakbeat drums, punchy bassline, bright euphoric synths. "
+    "High energy, positive feel — think club-ready DnB with a pop sensibility. "
     "No vocals, purely instrumental. "
-    "Suitable as continuous background music under spoken game reviews. "
-    "Maintain consistent energy throughout with subtle variations — no abrupt endings."
+    "Consistent driving energy throughout, suitable as background under spoken commentary."
 )
 
 
