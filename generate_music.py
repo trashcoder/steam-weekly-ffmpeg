@@ -43,7 +43,7 @@ def generate(api_key: str, prompt: str, workspace: Path) -> Path:
     print("Generating background music via Lyria 3 Clip...")
     resp = requests.post(API_URL, headers=headers, json=payload, stream=True, timeout=120)
     if not resp.ok:
-        sys.exit(f"Lyria API error {resp.status_code}: {resp.text}")
+        raise RuntimeError(f"Lyria API error {resp.status_code}: {resp.text}")
 
     audio_chunks: list[str] = []
     for raw in resp.iter_lines():
@@ -61,7 +61,7 @@ def generate(api_key: str, prompt: str, workspace: Path) -> Path:
             continue
 
     if not audio_chunks:
-        sys.exit("Lyria returned no audio data.")
+        raise RuntimeError("Lyria returned no audio data.")
 
     audio_bytes = base64.b64decode("".join(audio_chunks))
 
@@ -86,14 +86,29 @@ INTRO_PROMPT = (
 
 
 def generate_long_music(api_key: str, prompt: str, workspace: Path, clips: int = 3) -> Path:
-    """Generiert mehrere Clips und fügt sie zu einem langen Track zusammen."""
+    """Generiert mehrere Clips und fügt sie zu einem langen Track zusammen.
+    Wiederholt fehlgeschlagene Versuche bis zu clips*2 Gesamtversuchen."""
     clip_paths = []
-    for i in range(clips):
-        print(f"Generating music clip {i + 1}/{clips}...")
-        clip = generate(api_key, prompt, workspace)
-        numbered = workspace / f"gaming_music_part{i + 1}{clip.suffix}"
+    attempt = 0
+    max_attempts = clips * 2
+    while len(clip_paths) < clips and attempt < max_attempts:
+        attempt += 1
+        print(f"Generating music clip {len(clip_paths) + 1}/{clips} (Versuch {attempt}/{max_attempts})...")
+        try:
+            clip = generate(api_key, prompt, workspace)
+        except RuntimeError as e:
+            print(f"WARNING: Versuch {attempt} fehlgeschlagen, wiederhole: {e}", file=sys.stderr)
+            continue
+        numbered = workspace / f"gaming_music_part{len(clip_paths) + 1}{clip.suffix}"
         clip.rename(numbered)
         clip_paths.append(numbered)
+
+    if not clip_paths:
+        sys.exit("Fehler: Kein einziger Musik-Clip erfolgreich generiert.")
+    if len(clip_paths) < clips:
+        print(f"WARNING: Nur {len(clip_paths)}/{clips} Clips generiert — Musik wird häufiger geloopt.", file=sys.stderr)
+    else:
+        print(f"Alle {clips} Clips erfolgreich generiert.")
 
     out = workspace / "gaming_music.mp3"
     list_file = workspace / "_music_concat.txt"
@@ -134,7 +149,10 @@ def main():
 
     if custom_output:
         # Intro-Musik: einzelner Clip reicht
-        result = generate(api_key, prompt, workspace)
+        try:
+            result = generate(api_key, prompt, workspace)
+        except RuntimeError as e:
+            sys.exit(f"Fehler bei Intro-Musikgenerierung: {e}")
         if result != Path(custom_output):
             result.rename(custom_output)
     else:
