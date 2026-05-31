@@ -17,8 +17,17 @@ import uuid
 import shutil
 import threading
 import subprocess
+import logging
+import time
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger("ffmpeg-api")
 
 app = Flask(__name__)
 
@@ -29,15 +38,45 @@ SCRIPTS_DIR = Path("/app")
 jobs: dict = {}
 
 
+def _run_subprocess(label: str, cmd: list, **kwargs) -> subprocess.CompletedProcess:
+    """Führt einen Subprocess aus und loggt Start, Dauer und Ergebnis."""
+    log.info("[%s] Starte: %s", label, " ".join(str(c) for c in cmd))
+    t0 = time.monotonic()
+    r = subprocess.run(cmd, **kwargs)
+    elapsed = time.monotonic() - t0
+    if r.returncode == 0:
+        log.info("[%s] Erfolgreich in %.1fs", label, elapsed)
+        if getattr(r, "stdout", ""):
+            log.debug("[%s] STDOUT:\n%s", label, r.stdout.strip())
+    else:
+        log.error("[%s] Fehler (exit %d) nach %.1fs", label, r.returncode, elapsed)
+        if getattr(r, "stdout", ""):
+            log.error("[%s] STDOUT:\n%s", label, r.stdout.strip())
+        if getattr(r, "stderr", ""):
+            log.error("[%s] STDERR:\n%s", label, r.stderr.strip())
+    return r
+
+
+def _log_file_size(path, label: str):
+    p = Path(path)
+    if p.exists():
+        log.info("[%s] Datei: %s (%.1f KB)", label, p, p.stat().st_size / 1024)
+    else:
+        log.warning("[%s] Datei nicht gefunden: %s", label, p)
+
+
 # ── Health ─────────────────────────────────────────────────────────────
 
 @app.route("/health", methods=["GET"])
 def health():
+    log.debug("[health] Health-Check angefordert")
     try:
         r = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True)
         ffmpeg = r.stdout.split("\n")[0]
-    except Exception:
+    except Exception as e:
+        log.error("[health] ffmpeg nicht gefunden: %s", e)
         ffmpeg = "nicht gefunden"
+    log.info("[health] OK – %s", ffmpeg)
     return jsonify({"status": "ok", "ffmpeg": ffmpeg})
 
 
@@ -67,18 +106,21 @@ def render_sync():
     body      = request.get_json(silent=True) or {}
     workspace = body.get("workspace", str(DATA_DIR / "workspace"))
     output    = body.get("output",    str(DATA_DIR / "output"))
+    log.info("[render-sync] Render gestartet – workspace=%s output=%s", workspace, output)
 
     env = os.environ.copy()
     env["STEAM_WORKSPACE"] = workspace
     env["STEAM_OUTPUT"]    = output
     try:
-        r = subprocess.run(
+        r = _run_subprocess(
+            "render-sync",
             ["python3", str(SCRIPTS_DIR / "render_video.py")],
             capture_output=True, text=True, env=env, cwd=str(SCRIPTS_DIR),
             timeout=3600
         )
         if r.returncode == 0:
-            print(f"[render-sync] OK\n{r.stdout[-1000:]}")
+            out_file = Path(output) / "final_video.mp4"
+            _log_file_size(out_file, "render-sync")
             ts_path = Path(output) / "timestamps.json"
             timestamps = []
             if ts_path.exists():
@@ -87,43 +129,47 @@ def render_sync():
                     timestamps = _json.load(_f).get("games", [])
             return jsonify({
                 "success": True,
-                "output_file": str(Path(output) / "final_video.mp4"),
+                "output_file": str(out_file),
                 "timestamps": timestamps,
                 "log": r.stdout[-2000:]
             })
         else:
-            print(f"[render-sync] FEHLER (exit {r.returncode})\nSTDOUT: {r.stdout[-500:]}\nSTDERR: {r.stderr[-1000:]}")
             return jsonify({
                 "success": False,
                 "error": r.stderr[-2000:] or r.stdout[-2000:],
                 "exit_code": r.returncode
             }), 500
     except subprocess.TimeoutExpired:
-        print("[render-sync] TIMEOUT nach 3600s")
+        log.error("[render-sync] TIMEOUT nach 3600s")
         return jsonify({"success": False, "error": "Render timed out after 3600s"}), 500
     except Exception as e:
-        print(f"[render-sync] EXCEPTION: {e}")
+        log.exception("[render-sync] Unerwarteter Fehler")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
 def _run_render(job_id: str, workspace: str, output: str):
+    log.info("[render-async/%s] Starte Render-Thread – workspace=%s", job_id, workspace)
     env = os.environ.copy()
     env["STEAM_WORKSPACE"] = workspace
     env["STEAM_OUTPUT"]    = output
     try:
-        r = subprocess.run(
+        r = _run_subprocess(
+            f"render-async/{job_id}",
             ["python3", str(SCRIPTS_DIR / "render_video.py")],
             capture_output=True, text=True, env=env, cwd=str(SCRIPTS_DIR)
         )
         if r.returncode == 0:
+            out_file = Path(output) / "final_video.mp4"
+            _log_file_size(out_file, f"render-async/{job_id}")
             jobs[job_id] = {
                 "status":      "done",
-                "output_file": str(Path(output) / "final_video.mp4"),
+                "output_file": str(out_file),
                 "log":         r.stdout[-2000:]
             }
         else:
             jobs[job_id] = {"status": "error", "log": r.stderr[-2000:]}
     except Exception as e:
+        log.exception("[render-async/%s] Unerwarteter Fehler", job_id)
         jobs[job_id] = {"status": "error", "log": str(e)}
 
 
@@ -141,6 +187,7 @@ def get_status(job_id: str):
 
 @app.route("/intro-outro", methods=["POST"])
 def generate_intro_outro():
+    log.info("[intro-outro] Generiere Intro/Outro")
     body = request.get_json(silent=True) or {}
     env  = os.environ.copy()
     env["STEAM_WORKSPACE"] = str(DATA_DIR / "workspace")
@@ -156,16 +203,17 @@ def generate_intro_outro():
         if key in body:
             env[env_key] = body[key]
 
-    r = subprocess.run(
+    r = _run_subprocess(
+        "intro-outro",
         ["python3", str(SCRIPTS_DIR / "generate_intro_outro.py")],
         capture_output=True, text=True, env=env, cwd=str(SCRIPTS_DIR)
     )
     if r.returncode == 0:
-        return jsonify({
-            "status": "done",
-            "intro":  str(DATA_DIR / "workspace/intro.mp4"),
-            "outro":  str(DATA_DIR / "workspace/outro.mp4"),
-        })
+        intro = DATA_DIR / "workspace/intro.mp4"
+        outro = DATA_DIR / "workspace/outro.mp4"
+        _log_file_size(intro, "intro-outro")
+        _log_file_size(outro, "intro-outro")
+        return jsonify({"status": "done", "intro": str(intro), "outro": str(outro)})
     return jsonify({"status": "error", "log": r.stderr}), 500
 
 
@@ -180,6 +228,7 @@ def save_metadata():
     workspace.mkdir(parents=True, exist_ok=True)
     meta_file = workspace / "games_meta.json"
     meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info("[metadata] Gespeichert: %s (%d Einträge)", meta_file, len(meta))
 
     return jsonify({"status": "done", "file": str(meta_file), "count": len(meta)})
 
@@ -189,10 +238,13 @@ def init_workspace():
     body = request.get_json(silent=True) or {}
     workspace = Path(body.get("workspace", str(DATA_DIR / "workspace")))
     games_dir = workspace / "games"
+    log.info("[init] Workspace initialisieren: %s", workspace)
     if games_dir.exists():
+        log.info("[init] Lösche altes games-Verzeichnis: %s", games_dir)
         shutil.rmtree(games_dir)
     games_dir.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "output").mkdir(parents=True, exist_ok=True)
+    log.info("[init] Fertig – %s erstellt", games_dir)
     return jsonify({"status": "done", "workspace": str(workspace), "games": str(games_dir)})
 
 
@@ -261,13 +313,15 @@ def download_trailer():
     game_dir.mkdir(parents=True, exist_ok=True)
     dst = game_dir / "trailer.mp4"
 
-    print(f"[download-trailer] {name} ({appid}): {trailer_url[:80]}")
+    log.info("[download-trailer] #%s %s (%s): %s", rank, name, appid, trailer_url[:100])
     is_stream = any(x in trailer_url for x in [".m3u8", ".mpd", "manifest", "hls", "dash"])
     is_direct_mp4 = trailer_url.lower().split("?")[0].endswith(".mp4") and not is_stream
 
     if is_direct_mp4:
+        log.debug("[download-trailer] Methode: wget (direkte MP4)")
         cmd = ["wget", "-q", "-O", str(dst), "--timeout=120", trailer_url]
     else:
+        log.debug("[download-trailer] Methode: ffmpeg (Stream/DASH/HLS)")
         cmd = [
             "ffmpeg", "-y",
             "-i", trailer_url,
@@ -275,11 +329,11 @@ def download_trailer():
             "-t", "90",
             str(dst)
         ]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    r = _run_subprocess("download-trailer", cmd, capture_output=True, text=True, timeout=300)
     if r.returncode != 0:
-        print(f"[download-trailer] FEHLER {name}: {r.stderr[-500:]}")
-        return jsonify({"error": r.stderr[-500:], "rank": body.get("rank"), "appid": appid, "name": name}), 500
+        return jsonify({"error": r.stderr[-2000:], "rank": body.get("rank"), "appid": appid, "name": name}), 500
 
+    _log_file_size(dst, "download-trailer")
     return jsonify({"status": "done", "file": str(dst), "rank": body.get("rank"), "appid": appid, "name": name})
 
 
@@ -327,10 +381,10 @@ def _merge_voice_with_bg(workspace: Path, bg_name: str, voice_file, out_name: st
                 "-shortest", str(out),
             ]
 
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        r = _run_subprocess("merge-voice-bg", cmd, capture_output=True, text=True)
         if r.returncode != 0:
-            print(f"[merge-voice-bg] FEHLER: {r.stderr[-500:]}")
-            return jsonify({"error": r.stderr[-500:]}), 500
+            return jsonify({"error": r.stderr[-2000:]}), 500
+        _log_file_size(out, "merge-voice-bg")
         response = {"status": "done", "file": str(out)}
         if echo_fields:
             response.update(echo_fields)
@@ -354,15 +408,18 @@ def generate_music():
     if "music_prompt" in body:
         env["MUSIC_PROMPT"] = body["music_prompt"]
 
-    r = subprocess.run(
+    prompt_preview = (env.get("MUSIC_PROMPT", "")[:80] + "…") if env.get("MUSIC_PROMPT") else "(default)"
+    log.info("[generate-music] Starte Musikgenerierung – workspace=%s prompt=%s", workspace, prompt_preview)
+    r = _run_subprocess(
+        "generate-music",
         ["python3", str(SCRIPTS_DIR / "generate_music.py")],
         capture_output=True, text=True, env=env, cwd=str(SCRIPTS_DIR),
         timeout=600
     )
     if r.returncode == 0:
         music_file = next(Path(workspace).glob("gaming_music.*"), None)
+        _log_file_size(music_file, "generate-music") if music_file else log.warning("[generate-music] Keine gaming_music.*-Datei gefunden")
         return jsonify({"status": "done", "file": str(music_file or workspace + "/gaming_music.*")})
-    print(f"[generate-music] FEHLER: {r.stderr}")
     return jsonify({"status": "error", "log": r.stderr}), 500
 
 
@@ -402,15 +459,17 @@ def generate_intro_music():
     env["OPENROUTER_API_KEY"] = api_key
     env["MUSIC_OUTPUT"] = str(out_path)
 
-    r = subprocess.run(
+    log.info("[generate-intro-music] Starte Intro-Musikgenerierung – output=%s", out_path)
+    r = _run_subprocess(
+        "generate-intro-music",
         ["python3", str(SCRIPTS_DIR / "generate_music.py")],
         capture_output=True, text=True, env=env, cwd=str(SCRIPTS_DIR),
         timeout=600
     )
     if r.returncode == 0:
         actual = next(DATA_DIR.glob("intro_music.*"), out_path)
+        _log_file_size(actual, "generate-intro-music")
         return jsonify({"status": "done", "file": str(actual)})
-    print(f"[generate-intro-music] FEHLER: {r.stderr}")
     return jsonify({"status": "error", "log": r.stderr}), 500
 
 
@@ -439,5 +498,5 @@ def download_output(filename: str):
 # ── Start ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("🎬 FFmpeg API Server startet auf Port 5679...")
+    log.info("FFmpeg API Server startet auf Port 5679...")
     app.run(host="0.0.0.0", port=5679, debug=False)
