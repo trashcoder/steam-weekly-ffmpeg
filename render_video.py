@@ -39,6 +39,7 @@ TARGET_PRESET  = "fast"
 TARGET_CRF     = 23
 
 CLIP_MAX_DURATION = int(os.environ.get("CLIP_MAX_DURATION", "60"))  # Sekunden pro Spiel-Clip
+INTRO_DURATION    = 10  # Intro ist exakt 10s – Trailer-Musik startet erst danach
 
 # Übergangs-/Titelkarte pro Spiel (Sekunden schwarzer Screen mit Titel)
 TITLE_CARD_DURATION = 3   # Sekunden – auf 0 setzen um zu deaktivieren
@@ -168,13 +169,15 @@ def format_ts(seconds: float) -> str:
 
 
 def mix_music_over_video(video: Path, music: Path, dst: Path):
-    """Legt Hintergrundmusik (geloopt) unter das fertige Gesamtvideo."""
+    """Legt Hintergrundmusik (geloopt) unter das fertige Gesamtvideo.
+    Musik startet erst nach dem Intro (INTRO_DURATION Sekunden Delay)."""
+    delay_ms = INTRO_DURATION * 1000
     cmd = [
         "ffmpeg", "-y",
         "-i", str(video),
         "-stream_loop", "-1", "-i", str(music),
         "-filter_complex",
-        "[1:a]volume=0.15[bg];[0:a][bg]amix=inputs=2:duration=first[aout]",
+        f"[1:a]adelay={delay_ms}|{delay_ms},volume=0.15[bg];[0:a][bg]amix=inputs=2:duration=first[aout]",
         "-map", "0:v",
         "-map", "[aout]",
         "-c:v", "copy",

@@ -296,6 +296,33 @@ def save_trailer():
     return _save_game_file("trailer.mp4")
 
 
+@app.route("/probe-duration", methods=["POST"])
+def probe_duration():
+    """Ermittelt die Dauer einer Video-URL via ffprobe ohne vollständigen Download."""
+    body = request.get_json(silent=True) or {}
+    url = body.get("url", "")
+    if not url:
+        return jsonify({"duration": None, "error": "url required"}), 400
+
+    log.info("[probe-duration] %s", url[:100])
+    r = _run_subprocess("probe-duration", [
+        "ffprobe", "-v", "error",
+        "-analyzeduration", "3000000", "-probesize", "1000000",
+        "-show_entries", "format=duration",
+        "-of", "json",
+        url
+    ], capture_output=True, text=True, timeout=30)
+
+    if r.returncode == 0:
+        try:
+            duration = float(json.loads(r.stdout).get("format", {}).get("duration") or 0)
+            log.info("[probe-duration] Dauer: %.1fs", duration)
+            return jsonify({"duration": duration})
+        except (ValueError, KeyError) as e:
+            log.warning("[probe-duration] Parse-Fehler: %s", e)
+    return jsonify({"duration": None, "error": r.stderr[-500:]})
+
+
 @app.route("/workspace/download-trailer", methods=["POST"])
 def download_trailer():
     """Lädt Trailer per FFmpeg direkt von der URL – unterstützt DASH, HLS und direkte MP4."""
@@ -334,7 +361,20 @@ def download_trailer():
         return jsonify({"error": r.stderr[-2000:], "rank": body.get("rank"), "appid": appid, "name": name}), 500
 
     _log_file_size(dst, "download-trailer")
-    return jsonify({"status": "done", "file": str(dst), "rank": body.get("rank"), "appid": appid, "name": name})
+
+    duration = None
+    try:
+        pr = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(dst)],
+            capture_output=True, text=True, timeout=15
+        )
+        if pr.returncode == 0:
+            duration = float(json.loads(pr.stdout).get("format", {}).get("duration") or 0)
+            log.info("[download-trailer] Dauer: %.1fs", duration)
+    except Exception as e:
+        log.warning("[download-trailer] ffprobe fehlgeschlagen: %s", e)
+
+    return jsonify({"status": "done", "file": str(dst), "rank": body.get("rank"), "appid": appid, "name": name, "trailerUrl": trailer_url, "duration": duration})
 
 
 def _merge_voice_with_bg(workspace: Path, bg_name: str, voice_file, out_name: str, echo_fields: dict = None, music: Path = None, music_offset: int = 0):
