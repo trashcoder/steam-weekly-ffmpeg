@@ -357,7 +357,7 @@ def generate_music():
     r = subprocess.run(
         ["python3", str(SCRIPTS_DIR / "generate_music.py")],
         capture_output=True, text=True, env=env, cwd=str(SCRIPTS_DIR),
-        timeout=120
+        timeout=600
     )
     if r.returncode == 0:
         music_file = next(Path(workspace).glob("gaming_music.*"), None)
@@ -405,7 +405,7 @@ def generate_intro_music():
     r = subprocess.run(
         ["python3", str(SCRIPTS_DIR / "generate_music.py")],
         capture_output=True, text=True, env=env, cwd=str(SCRIPTS_DIR),
-        timeout=120
+        timeout=600
     )
     if r.returncode == 0:
         actual = next(DATA_DIR.glob("intro_music.*"), out_path)
